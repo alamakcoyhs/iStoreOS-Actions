@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/github/forks/Kwonelee/iStoreOS-Actions.svg?style=for-the-badge&color=ff69b4"/>
   <img src="https://img.shields.io/github/license/Kwonelee/iStoreOS-Actions.svg?style=for-the-badge&color=blueviolet"/>
 
-  [![](https://img.shields.io/badge/-目录:-696969.svg)](#-readme-)
+  [![](https://img.shields.io/badge/-目录:-696969.svg)](#readme)
   [![](https://img.shields.io/badge/-项目介绍-FFFFFF.svg)](#-项目介绍-)
   [![](https://img.shields.io/badge/-第三方插件-FFFFFF.svg)](#-第三方插件-)
   [![](https://img.shields.io/badge/-支持设备-FFFFFF.svg)](#-支持设备-)
