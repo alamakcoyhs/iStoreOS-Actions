@@ -1,4 +1,4 @@
-name: Build QModem for aarch64_generic
+name: Build Full QModem for aarch64_generic
 
 on:
   workflow_dispatch:
@@ -46,10 +46,10 @@ jobs:
       - name: Show qmodem packages
         working-directory: ./sdk
         run: |
-          echo "=== qmodem symlinks in package/feeds/qmodem ==="
+          echo "=== package/feeds/qmodem ==="
           ls -lah package/feeds/qmodem || true
 
-      - name: Prepare config
+      - name: Prepare minimal config
         working-directory: ./sdk
         run: |
           cat > .config << 'EOF'
@@ -58,61 +58,125 @@ jobs:
           CONFIG_ALL_NONSHARED=n
           CONFIG_DEVEL=n
           CONFIG_CCACHE=y
-
-          CONFIG_PACKAGE_qmodem=m
-          CONFIG_PACKAGE_luci-app-qmodem=m
-          CONFIG_PACKAGE_sms-tool_q=m
-          CONFIG_PACKAGE_sms_forwarder=m
-          CONFIG_PACKAGE_tom_modem=m
-          CONFIG_PACKAGE_ubus_at_daemon=m
-          CONFIG_PACKAGE_ndisc6=m
-          CONFIG_PACKAGE_rdisc6=m
           EOF
           make defconfig
 
-      - name: Compile core QModem packages
+      - name: Compile full qmodem feed
         working-directory: ./sdk
         run: |
-          set -e
+          set +e
 
-          PKGS="qmodem luci-app-qmodem sms-tool_q sms_forwarder tom_modem ubus_at_daemon ndisc6"
+          # Paket inti yang harus sukses agar qmodem bisa dibundel ke firmware
+          REQUIRED_PKGS="
+          qmodem
+          luci-app-qmodem
+          ubus_at_daemon
+          quectel_CM_5G_M
+          sms-tool_q
+          sms_forwarder
+          tom_modem
+          ndisc6
+          fibocom_QMI_WWAN
+          quectel_QMI_WWAN
+          simcom_QMI_WWAN
+          "
 
-          FAILED=""
-          for pkg in $PKGS; do
+          # Semua folder paket yang ada di feed
+          ALL_PKGS=""
+          for d in package/feeds/qmodem/*; do
+            [ -d "$d" ] || continue
+            [ -f "$d/Makefile" ] || continue
+            ALL_PKGS="$ALL_PKGS $(basename "$d")"
+          done
+          ALL_PKGS="$(echo "$ALL_PKGS" | xargs)"
+
+          echo "Detected feed packages:"
+          for pkg in $ALL_PKGS; do
+            echo " - $pkg"
+          done
+
+          if [ -z "$ALL_PKGS" ]; then
+            echo "No buildable packages found in package/feeds/qmodem"
+            exit 1
+          fi
+
+          FAILED_REQUIRED=""
+          FAILED_OPTIONAL=""
+
+          for pkg in $ALL_PKGS; do
             echo "========================================"
             echo "Compiling package: $pkg"
             echo "========================================"
-            if ! make "package/feeds/qmodem/$pkg/compile" V=s -j1; then
-              FAILED="$FAILED $pkg"
+            make "package/feeds/qmodem/$pkg/compile" V=s -j1
+            STATUS=$?
+
+            if [ $STATUS -ne 0 ]; then
+              echo "FAILED: $pkg"
+              if echo " $REQUIRED_PKGS " | grep -q " $pkg "; then
+                FAILED_REQUIRED="$FAILED_REQUIRED $pkg"
+              else
+                FAILED_OPTIONAL="$FAILED_OPTIONAL $pkg"
+              fi
             fi
           done
 
-          FAILED="$(echo "$FAILED" | xargs || true)"
-          if [ -n "$FAILED" ]; then
-            echo "Some packages failed: $FAILED"
+          FAILED_REQUIRED="$(echo "$FAILED_REQUIRED" | xargs || true)"
+          FAILED_OPTIONAL="$(echo "$FAILED_OPTIONAL" | xargs || true)"
+
+          echo "========================================"
+          echo "FAILED_REQUIRED=$FAILED_REQUIRED"
+          echo "FAILED_OPTIONAL=$FAILED_OPTIONAL"
+          echo "========================================"
+
+          # Simpan daftar gagal agar tetap ikut ke artifact
+          mkdir -p /tmp/qmodem-build-meta
+          printf '%s\n' "$FAILED_REQUIRED" > /tmp/qmodem-build-meta/failed_required.txt
+          printf '%s\n' "$FAILED_OPTIONAL" > /tmp/qmodem-build-meta/failed_optional.txt
+
+          # Fail hanya jika paket inti ada yang gagal
+          if [ -n "$FAILED_REQUIRED" ]; then
             exit 1
           fi
 
       - name: Collect IPKs
+        if: always()
         run: |
           mkdir -p output
-          find sdk/bin/packages -type f -name "*.ipk" | sort | tee output/ipk-list.txt
+
+          find sdk/bin/packages -type f -name "*.ipk" | sort | tee output/ipk-list.txt || true
+
           find sdk/bin/packages -type f -name "*.ipk" \
-            \( -name "*qmodem*.ipk" -o \
+            -name "*qmodem*.ipk" -o \
                -name "sms-tool_q*.ipk" -o \
                -name "sms_forwarder*.ipk" -o \
+               -name "sms-forwarder*.ipk" -o \
                -name "tom_modem*.ipk" -o \
+               -name "tom-modem*.ipk" -o \
                -name "ubus_at_daemon*.ipk" -o \
+               -name "ubus-at-daemon*.ipk" -o \
+               -name "quectel_CM_5G_M*.ipk" -o \
+               -name "quectel-CM-5G-M*.ipk" -o \
                -name "ndisc6*.ipk" -o \
-               -name "rdisc6*.ipk" \) \
-            -exec cp -v {} output/ \;
-          ls -lah output
+               -name "rdisc6*.ipk" -o \
+               -name "kmod*qmi*wwan*q*.ipk" -o \
+               -name "kmod*qmi*wwan*f*.ipk" -o \
+               -name "kmod*qmi*wwan*s*.ipk" -o \
+               -name "kmod*fibocom*.ipk" -o \
+               -name "kmod*quectel*.ipk" -o \
+               -name "kmod*simcom*.ipk" \
+            -exec cp -v {} output/ \; || true
+
+          cp -fv /tmp/qmodem-build-meta/failed_required.txt output/ 2>/dev/null || true
+          cp -fv /tmp/qmodem-build-meta/failed_optional.txt output/ 2>/dev/null || true
+
+          echo "=== output files ==="
+          ls -lah output || true
 
       - name: Upload IPK artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: qmodem-aarch64-generic-ipk
+          name: qmodem-aarch64-generic-ipk-full
           path: |
-            output/*.ipk
-            output/ipk-list.txt
-          if-no-files-found: error
+            output/*
+          if
