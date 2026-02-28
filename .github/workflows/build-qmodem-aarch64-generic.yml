@@ -43,13 +43,10 @@ jobs:
           ./scripts/feeds update qmodem
           ./scripts/feeds install -a -f -p qmodem
 
-      - name: Show qmodem packages
-        working-directory: ./sdk
-        run: |
           echo "=== package/feeds/qmodem ==="
           ls -lah package/feeds/qmodem || true
 
-      - name: Prepare minimal config
+      - name: Prepare full config
         working-directory: ./sdk
         run: |
           cat > .config << 'EOF'
@@ -58,121 +55,122 @@ jobs:
           CONFIG_ALL_NONSHARED=n
           CONFIG_DEVEL=n
           CONFIG_CCACHE=y
+
+          # Core
+          CONFIG_PACKAGE_qmodem=m
+          CONFIG_PACKAGE_luci-app-qmodem=m
+          CONFIG_PACKAGE_sms-tool_q=m
+          CONFIG_PACKAGE_tom_modem=m
+          CONFIG_PACKAGE_ndisc6=m
+          CONFIG_PACKAGE_rdisc6=m
+          CONFIG_PACKAGE_bc=y
+
+          # Extra QModem components (if present in feed)
+          CONFIG_PACKAGE_ubus-at-daemon=m
+          CONFIG_PACKAGE_ubus_at_daemon=m
+          CONFIG_PACKAGE_quectel-CM-5G-M=m
+          CONFIG_PACKAGE_quectel_CM_5G_M=m
+          CONFIG_PACKAGE_sms-forwarder=m
+          CONFIG_PACKAGE_sms_forwarder=m
+
+          # QMI driver packages (if present)
+          CONFIG_PACKAGE_kmod-qmi_wwan_f=m
+          CONFIG_PACKAGE_kmod-qmi_wwan_q=m
+          CONFIG_PACKAGE_kmod-qmi_wwan_s=m
+
+          # Optional LuCI variants (if present)
+          CONFIG_PACKAGE_luci-app-qmodem-next=m
+          CONFIG_PACKAGE_luci-app-qmodem-sms=m
+          CONFIG_PACKAGE_luci-app-qmodem-mwan=m
+          CONFIG_PACKAGE_luci-app-qmodem-ttl=m
           EOF
           make defconfig
 
-      - name: Compile full qmodem feed
+      - name: Compile full QModem stack
         working-directory: ./sdk
         run: |
-          set +e
+          set -e
 
-          REQUIRED_PKGS="
-          qmodem
-          luci-app-qmodem
-          ubus_at_daemon
-          quectel_CM_5G_M
-          sms-tool_q
-          sms_forwarder
-          tom_modem
-          ndisc6
-          fibocom_QMI_WWAN
-          quectel_QMI_WWAN
-          simcom_QMI_WWAN
-          "
-
-          ALL_PKGS=""
-          for d in package/feeds/qmodem/*; do
-            [ -d "$d" ] || continue
-            [ -f "$d/Makefile" ] || continue
-            ALL_PKGS="$ALL_PKGS $(basename "$d")"
-          done
-          ALL_PKGS="$(echo "$ALL_PKGS" | xargs)"
-
-          echo "Detected feed packages:"
-          for pkg in $ALL_PKGS; do
-            echo " - $pkg"
-          done
-
-          if [ -z "$ALL_PKGS" ]; then
-            echo "No buildable packages found in package/feeds/qmodem"
-            exit 1
-          fi
-
-          FAILED_REQUIRED=""
-          FAILED_OPTIONAL=""
-
-          for pkg in $ALL_PKGS; do
-            echo "========================================"
-            echo "Compiling package: $pkg"
-            echo "========================================"
-            make "package/feeds/qmodem/$pkg/compile" V=s -j1
-            STATUS=$?
-
-            if [ $STATUS -ne 0 ]; then
-              echo "FAILED: $pkg"
-              if echo " $REQUIRED_PKGS " | grep -q " $pkg "; then
-                FAILED_REQUIRED="$FAILED_REQUIRED $pkg"
-              else
-                FAILED_OPTIONAL="$FAILED_OPTIONAL $pkg"
-              fi
+          build_if_exists() {
+            local pkg="$1"
+            if [ -d "package/feeds/qmodem/$pkg" ] && [ -f "package/feeds/qmodem/$pkg/Makefile" ]; then
+              echo "========================================"
+              echo "Compiling: $pkg"
+              echo "========================================"
+              make "package/feeds/qmodem/$pkg/compile" V=s -j1
+            else
+              echo "SKIP (not found in feed): $pkg"
             fi
-          done
+          }
 
-          FAILED_REQUIRED="$(echo "$FAILED_REQUIRED" | xargs || true)"
-          FAILED_OPTIONAL="$(echo "$FAILED_OPTIONAL" | xargs || true)"
+          # Core
+          build_if_exists qmodem
+          build_if_exists luci-app-qmodem
+          build_if_exists sms-tool_q
+          build_if_exists tom_modem
+          build_if_exists ndisc6
 
-          echo "========================================"
-          echo "FAILED_REQUIRED=$FAILED_REQUIRED"
-          echo "FAILED_OPTIONAL=$FAILED_OPTIONAL"
-          echo "========================================"
+          # Runtime helpers / extras
+          build_if_exists ubus_at_daemon
+          build_if_exists quectel_CM_5G_M
+          build_if_exists sms_forwarder
 
-          mkdir -p /tmp/qmodem-build-meta
-          printf '%s\n' "$FAILED_REQUIRED" > /tmp/qmodem-build-meta/failed_required.txt
-          printf '%s\n' "$FAILED_OPTIONAL" > /tmp/qmodem-build-meta/failed_optional.txt
+          # QMI driver recipe dirs (these usually emit kmod-qmi_wwan_*.ipk)
+          build_if_exists fibocom_QMI_WWAN
+          build_if_exists quectel_QMI_WWAN
+          build_if_exists simcom_QMI_WWAN
 
-          if [ -n "$FAILED_REQUIRED" ]; then
-            exit 1
-          fi
+          # Optional LuCI variants
+          build_if_exists luci-app-qmodem-next
+          build_if_exists luci-app-qmodem-sms
+          build_if_exists luci-app-qmodem-mwan
+          build_if_exists luci-app-qmodem-ttl
 
-      - name: Collect IPKs
-        if: always()
+      - name: Collect QModem-related IPKs
         run: |
           mkdir -p output
 
-          find sdk/bin/packages -type f -name "*.ipk" | sort | tee output/ipk-list.txt || true
+          find sdk/bin/packages -type f -name "*.ipk" | sort | tee output/ipk-list.txt
 
           find sdk/bin/packages -type f -name "*.ipk" \
-            \( -name "*qmodem*.ipk" -o \
+            \( -name "qmodem*.ipk" -o \
+               -name "luci-app-qmodem*.ipk" -o \
                -name "sms-tool_q*.ipk" -o \
-               -name "sms_forwarder*.ipk" -o \
-               -name "sms-forwarder*.ipk" -o \
                -name "tom_modem*.ipk" -o \
-               -name "tom-modem*.ipk" -o \
-               -name "ubus_at_daemon*.ipk" -o \
-               -name "ubus-at-daemon*.ipk" -o \
-               -name "quectel_CM_5G_M*.ipk" -o \
-               -name "quectel-CM-5G-M*.ipk" -o \
                -name "ndisc6*.ipk" -o \
                -name "rdisc6*.ipk" -o \
-               -name "kmod*qmi*wwan*q*.ipk" -o \
-               -name "kmod*qmi*wwan*f*.ipk" -o \
-               -name "kmod*qmi*wwan*s*.ipk" -o \
-               -name "kmod*fibocom*.ipk" -o \
-               -name "kmod*quectel*.ipk" -o \
-               -name "kmod*simcom*.ipk" \) \
-            -exec cp -v {} output/ \; || true
-
-          cp -fv /tmp/qmodem-build-meta/failed_required.txt output/ 2>/dev/null || true
-          cp -fv /tmp/qmodem-build-meta/failed_optional.txt output/ 2>/dev/null || true
+               -name "ubus-at-daemon*.ipk" -o \
+               -name "ubus_at_daemon*.ipk" -o \
+               -name "quectel-CM-5G-M*.ipk" -o \
+               -name "quectel_CM_5G_M*.ipk" -o \
+               -name "sms-forwarder*.ipk" -o \
+               -name "sms_forwarder*.ipk" -o \
+               -name "kmod-qmi_wwan_f*.ipk" -o \
+               -name "kmod-qmi_wwan_q*.ipk" -o \
+               -name "kmod-qmi_wwan_s*.ipk" -o \
+               -name "luci-app-qmodem-next*.ipk" -o \
+               -name "luci-app-qmodem-sms*.ipk" -o \
+               -name "luci-app-qmodem-mwan*.ipk" -o \
+               -name "luci-app-qmodem-ttl*.ipk" \) \
+            -exec cp -v {} output/ \;
 
           echo "=== output files ==="
-          ls -lah output || true
+          ls -lah output
+
+      - name: Verify core full-stack IPKs exist
+        run: |
+          ls output/qmodem_*.ipk
+          ls output/luci-app-qmodem_*.ipk
+          ls output/sms-tool_q_*.ipk
+          ls output/tom_modem_*.ipk
+          ls output/ndisc6_*.ipk
+          ls output/rdisc6_*.ipk
 
       - name: Upload IPK artifact
-        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: qmodem-aarch64-generic-ipk-full
           path: |
-            output/*
-          if-no-files-found: warn
+            output/*.ipk
+            output/ipk-list.txt
+          if-no-files-found: error
