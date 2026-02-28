@@ -48,8 +48,6 @@ jobs:
         run: |
           echo "=== qmodem symlinks in package/feeds/qmodem ==="
           ls -lah package/feeds/qmodem || true
-          echo "=== qmodem source dirs in feeds/qmodem ==="
-          find feeds/qmodem -mindepth 2 -maxdepth 2 -type f -name Makefile | sort || true
 
       - name: Prepare config
         working-directory: ./sdk
@@ -61,7 +59,6 @@ jobs:
           CONFIG_DEVEL=n
           CONFIG_CCACHE=y
 
-          # Paket inti yang benar-benar dibutuhkan
           CONFIG_PACKAGE_qmodem=m
           CONFIG_PACKAGE_luci-app-qmodem=m
           CONFIG_PACKAGE_sms-tool_q=m
@@ -78,7 +75,7 @@ jobs:
         run: |
           set -e
 
-          PKGS="qmodem luci-app-qmodem sms-tool_q sms_forwarder tom_modem ubus_at_daemon ndisc6 rdisc6"
+          PKGS="qmodem luci-app-qmodem sms-tool_q sms_forwarder tom_modem ubus_at_daemon ndisc6"
 
           FAILED=""
           for pkg in $PKGS; do
