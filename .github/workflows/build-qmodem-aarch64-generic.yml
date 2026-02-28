@@ -1,11 +1,178 @@
-name: Test Manual Run
+name: Build Full QModem for aarch64_generic
 
 on:
   workflow_dispatch:
 
+env:
+  SDK_URL: https://downloads.openwrt.org/releases/24.10.5/targets/armsr/armv8/openwrt-sdk-24.10.5-armsr-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  build:
+    runs-on: ubuntu-22.04
+
     steps:
-      - name: Echo
-        run: echo "manual run works"
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential clang flex bison g++ gawk gcc-multilib gettext \
+            git libncurses5-dev libssl-dev python3 python3-distutils rsync \
+            unzip zlib1g-dev file wget curl zstd ca-certificates patch \
+            pkgconf ccache xz-utils
+
+      - name: Download OpenWrt SDK
+        run: |
+          wget -O openwrt-sdk.tar.zst "$SDK_URL"
+          tar --use-compress-program=unzstd -xf openwrt-sdk.tar.zst
+          mv openwrt-sdk-* sdk
+          test -d sdk
+
+      - name: Update default feeds
+        working-directory: ./sdk
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Add QModem feed
+        working-directory: ./sdk
+        run: |
+          echo 'src-git qmodem https://github.com/FUjr/QModem.git;main' >> feeds.conf.default
+          ./scripts/feeds update qmodem
+          ./scripts/feeds install -a -f -p qmodem
+
+      - name: Show qmodem packages
+        working-directory: ./sdk
+        run: |
+          echo "=== package/feeds/qmodem ==="
+          ls -lah package/feeds/qmodem || true
+
+      - name: Prepare minimal config
+        working-directory: ./sdk
+        run: |
+          cat > .config << 'EOF'
+          CONFIG_ALL=n
+          CONFIG_ALL_KMODS=n
+          CONFIG_ALL_NONSHARED=n
+          CONFIG_DEVEL=n
+          CONFIG_CCACHE=y
+          EOF
+          make defconfig
+
+      - name: Compile full qmodem feed
+        working-directory: ./sdk
+        run: |
+          set +e
+
+          REQUIRED_PKGS="
+          qmodem
+          luci-app-qmodem
+          ubus_at_daemon
+          quectel_CM_5G_M
+          sms-tool_q
+          sms_forwarder
+          tom_modem
+          ndisc6
+          fibocom_QMI_WWAN
+          quectel_QMI_WWAN
+          simcom_QMI_WWAN
+          "
+
+          ALL_PKGS=""
+          for d in package/feeds/qmodem/*; do
+            [ -d "$d" ] || continue
+            [ -f "$d/Makefile" ] || continue
+            ALL_PKGS="$ALL_PKGS $(basename "$d")"
+          done
+          ALL_PKGS="$(echo "$ALL_PKGS" | xargs)"
+
+          echo "Detected feed packages:"
+          for pkg in $ALL_PKGS; do
+            echo " - $pkg"
+          done
+
+          if [ -z "$ALL_PKGS" ]; then
+            echo "No buildable packages found in package/feeds/qmodem"
+            exit 1
+          fi
+
+          FAILED_REQUIRED=""
+          FAILED_OPTIONAL=""
+
+          for pkg in $ALL_PKGS; do
+            echo "========================================"
+            echo "Compiling package: $pkg"
+            echo "========================================"
+            make "package/feeds/qmodem/$pkg/compile" V=s -j1
+            STATUS=$?
+
+            if [ $STATUS -ne 0 ]; then
+              echo "FAILED: $pkg"
+              if echo " $REQUIRED_PKGS " | grep -q " $pkg "; then
+                FAILED_REQUIRED="$FAILED_REQUIRED $pkg"
+              else
+                FAILED_OPTIONAL="$FAILED_OPTIONAL $pkg"
+              fi
+            fi
+          done
+
+          FAILED_REQUIRED="$(echo "$FAILED_REQUIRED" | xargs || true)"
+          FAILED_OPTIONAL="$(echo "$FAILED_OPTIONAL" | xargs || true)"
+
+          echo "========================================"
+          echo "FAILED_REQUIRED=$FAILED_REQUIRED"
+          echo "FAILED_OPTIONAL=$FAILED_OPTIONAL"
+          echo "========================================"
+
+          mkdir -p /tmp/qmodem-build-meta
+          printf '%s\n' "$FAILED_REQUIRED" > /tmp/qmodem-build-meta/failed_required.txt
+          printf '%s\n' "$FAILED_OPTIONAL" > /tmp/qmodem-build-meta/failed_optional.txt
+
+          if [ -n "$FAILED_REQUIRED" ]; then
+            exit 1
+          fi
+
+      - name: Collect IPKs
+        if: always()
+        run: |
+          mkdir -p output
+
+          find sdk/bin/packages -type f -name "*.ipk" | sort | tee output/ipk-list.txt || true
+
+          find sdk/bin/packages -type f -name "*.ipk" \
+            \( -name "*qmodem*.ipk" -o \
+               -name "sms-tool_q*.ipk" -o \
+               -name "sms_forwarder*.ipk" -o \
+               -name "sms-forwarder*.ipk" -o \
+               -name "tom_modem*.ipk" -o \
+               -name "tom-modem*.ipk" -o \
+               -name "ubus_at_daemon*.ipk" -o \
+               -name "ubus-at-daemon*.ipk" -o \
+               -name "quectel_CM_5G_M*.ipk" -o \
+               -name "quectel-CM-5G-M*.ipk" -o \
+               -name "ndisc6*.ipk" -o \
+               -name "rdisc6*.ipk" -o \
+               -name "kmod*qmi*wwan*q*.ipk" -o \
+               -name "kmod*qmi*wwan*f*.ipk" -o \
+               -name "kmod*qmi*wwan*s*.ipk" -o \
+               -name "kmod*fibocom*.ipk" -o \
+               -name "kmod*quectel*.ipk" -o \
+               -name "kmod*simcom*.ipk" \) \
+            -exec cp -v {} output/ \; || true
+
+          cp -fv /tmp/qmodem-build-meta/failed_required.txt output/ 2>/dev/null || true
+          cp -fv /tmp/qmodem-build-meta/failed_optional.txt output/ 2>/dev/null || true
+
+          echo "=== output files ==="
+          ls -lah output || true
+
+      - name: Upload IPK artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qmodem-aarch64-generic-ipk-full
+          path: |
+            output/*
+          if-no-files-found: warn
