@@ -42,7 +42,6 @@ jobs:
           echo 'src-git qmodem https://github.com/FUjr/QModem.git;main' >> feeds.conf.default
           ./scripts/feeds update qmodem
           ./scripts/feeds install -a -f -p qmodem
-
           echo "=== package/feeds/qmodem ==="
           ls -lah package/feeds/qmodem || true
 
@@ -84,14 +83,18 @@ jobs:
 
       - name: Mark build start time
         run: |
-          date +%s > /tmp/qmodem_build_start_epoch
           touch /tmp/qmodem_build_start
 
       - name: Build bc first
         working-directory: ./sdk
         run: |
           set -e
-          make package/utils/bc/compile V=s -j1
+          if [ -d "package/feeds/packages/bc" ] && [ -f "package/feeds/packages/bc/Makefile" ]; then
+            make package/feeds/packages/bc/compile V=s -j1
+          else
+            echo "bc package dir not found in feeds/packages"
+            exit 1
+          fi
 
       - name: Build all known QModem package dirs
         working-directory: ./sdk
@@ -176,11 +179,8 @@ jobs:
       - name: Collect ALL newly built IPKs
         run: |
           mkdir -p output
-
           find sdk/bin/packages -type f -name "*.ipk" | sort > output/ipk-list-all.txt
-
           find sdk/bin/packages -type f -name "*.ipk" -newer /tmp/qmodem_build_start -exec cp -v {} output/ \;
-
           echo "=== collected files ==="
           ls -lah output
 
