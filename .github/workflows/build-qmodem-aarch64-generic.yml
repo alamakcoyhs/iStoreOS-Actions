@@ -23,19 +23,18 @@ jobs:
             unzip zlib1g-dev file wget curl zstd ca-certificates patch \
             pkgconf ccache xz-utils
 
-      - name: Show runner info
-        run: |
-          uname -a
-          df -h
-          free -h
-
       - name: Download OpenWrt SDK
         run: |
           wget -O openwrt-sdk.tar.zst "$SDK_URL"
           tar --use-compress-program=unzstd -xf openwrt-sdk.tar.zst
           mv openwrt-sdk-* sdk
           test -d sdk
-          ls -lah sdk
+
+      - name: Update default feeds
+        working-directory: ./sdk
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
 
       - name: Add QModem feed
         working-directory: ./sdk
@@ -44,15 +43,15 @@ jobs:
           ./scripts/feeds update qmodem
           ./scripts/feeds install -a -f -p qmodem
 
-      - name: Inspect qmodem packages
+      - name: Show qmodem packages
         working-directory: ./sdk
         run: |
-          echo "=== package dirs ==="
-          find package/feeds/qmodem -mindepth 1 -maxdepth 1 -type d | sort || true
-          echo "=== makefiles ==="
-          find package/feeds/qmodem -mindepth 2 -maxdepth 2 -type f -name Makefile | sort || true
+          echo "=== qmodem symlinks in package/feeds/qmodem ==="
+          ls -lah package/feeds/qmodem || true
+          echo "=== qmodem source dirs in feeds/qmodem ==="
+          find feeds/qmodem -mindepth 2 -maxdepth 2 -type f -name Makefile | sort || true
 
-      - name: Prepare minimal config
+      - name: Prepare config
         working-directory: ./sdk
         run: |
           cat > .config << 'EOF'
@@ -61,28 +60,25 @@ jobs:
           CONFIG_ALL_NONSHARED=n
           CONFIG_DEVEL=n
           CONFIG_CCACHE=y
+
+          # Paket inti yang benar-benar dibutuhkan
+          CONFIG_PACKAGE_qmodem=m
+          CONFIG_PACKAGE_luci-app-qmodem=m
+          CONFIG_PACKAGE_sms-tool_q=m
+          CONFIG_PACKAGE_sms_forwarder=m
+          CONFIG_PACKAGE_tom_modem=m
+          CONFIG_PACKAGE_ubus_at_daemon=m
+          CONFIG_PACKAGE_ndisc6=m
+          CONFIG_PACKAGE_rdisc6=m
           EOF
           make defconfig
 
-      - name: Compile all qmodem feed packages one by one
+      - name: Compile core QModem packages
         working-directory: ./sdk
         run: |
           set -e
 
-          PKGS=""
-          for d in package/feeds/qmodem/*; do
-            [ -d "$d" ] || continue
-            [ -f "$d/Makefile" ] || continue
-            PKGS="$PKGS $(basename "$d")"
-          done
-
-          PKGS="$(echo "$PKGS" | xargs)"
-          echo "Detected packages: $PKGS"
-
-          if [ -z "$PKGS" ]; then
-            echo "No buildable packages found in package/feeds/qmodem"
-            exit 1
-          fi
+          PKGS="qmodem luci-app-qmodem sms-tool_q sms_forwarder tom_modem ubus_at_daemon ndisc6 rdisc6"
 
           FAILED=""
           for pkg in $PKGS; do
@@ -104,7 +100,15 @@ jobs:
         run: |
           mkdir -p output
           find sdk/bin/packages -type f -name "*.ipk" | sort | tee output/ipk-list.txt
-          find sdk/bin/packages -type f -name "*.ipk" -exec cp -v {} output/ \;
+          find sdk/bin/packages -type f -name "*.ipk" \
+            \( -name "*qmodem*.ipk" -o \
+               -name "sms-tool_q*.ipk" -o \
+               -name "sms_forwarder*.ipk" -o \
+               -name "tom_modem*.ipk" -o \
+               -name "ubus_at_daemon*.ipk" -o \
+               -name "ndisc6*.ipk" -o \
+               -name "rdisc6*.ipk" \) \
+            -exec cp -v {} output/ \;
           ls -lah output
 
       - name: Upload IPK artifact
