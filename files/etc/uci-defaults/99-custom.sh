@@ -69,13 +69,25 @@ esac
 
 # -3、开始配置网络
 if [ "$count" -eq 1 ]; then
-    # 单网口设备，DHCP模式
-    uci set network.lan.proto='dhcp'
-    uci delete network.lan.ipaddr
-    uci delete network.lan.netmask
+    # 单网口设备，改为静态IP模式（HG680P更方便首次访问）
+    uci set network.lan.proto='static'
+    uci set network.lan.ipaddr='192.168.1.1'
+    uci set network.lan.netmask='255.255.255.0'
     uci delete network.lan.gateway
     uci delete network.lan.dns
+
+    # 确保单网口设备仍然使用 br-lan
+    uci set network.lan.device='br-lan'
+
+    # DHCP 服务保持开启，方便电脑/手机自动获取地址
+    uci set dhcp.lan.interface='lan'
+    uci set dhcp.lan.start='100'
+    uci set dhcp.lan.limit='150'
+    uci set dhcp.lan.leasetime='12h'
+    uci -q delete dhcp.lan.ignore
+
     uci commit network
+    uci commit dhcp
 elif [ "$count" -gt 1 ]; then
     # 多网口设备
     # 配置WAN
