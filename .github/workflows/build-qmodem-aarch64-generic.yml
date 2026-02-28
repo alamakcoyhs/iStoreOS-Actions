@@ -1,4 +1,4 @@
-name: Build Full QModem for aarch64_generic
+name: Build COMPLETE QModem stack for aarch64_generic
 
 on:
   workflow_dispatch:
@@ -46,7 +46,7 @@ jobs:
           echo "=== package/feeds/qmodem ==="
           ls -lah package/feeds/qmodem || true
 
-      - name: Prepare full config
+      - name: Prepare build config
         working-directory: ./sdk
         run: |
           cat > .config << 'EOF'
@@ -56,37 +56,44 @@ jobs:
           CONFIG_DEVEL=n
           CONFIG_CCACHE=y
 
-          # Core
+          # known core
+          CONFIG_PACKAGE_bc=m
           CONFIG_PACKAGE_qmodem=m
           CONFIG_PACKAGE_luci-app-qmodem=m
-          CONFIG_PACKAGE_sms-tool_q=m
-          CONFIG_PACKAGE_tom_modem=m
-          CONFIG_PACKAGE_ndisc6=m
-          CONFIG_PACKAGE_rdisc6=m
-          CONFIG_PACKAGE_bc=y
-
-          # Extra QModem components (if present in feed)
-          CONFIG_PACKAGE_ubus-at-daemon=m
-          CONFIG_PACKAGE_ubus_at_daemon=m
-          CONFIG_PACKAGE_quectel-CM-5G-M=m
-          CONFIG_PACKAGE_quectel_CM_5G_M=m
-          CONFIG_PACKAGE_sms-forwarder=m
-          CONFIG_PACKAGE_sms_forwarder=m
-
-          # QMI driver packages (if present)
-          CONFIG_PACKAGE_kmod-qmi_wwan_f=m
-          CONFIG_PACKAGE_kmod-qmi_wwan_q=m
-          CONFIG_PACKAGE_kmod-qmi_wwan_s=m
-
-          # Optional LuCI variants (if present)
           CONFIG_PACKAGE_luci-app-qmodem-next=m
           CONFIG_PACKAGE_luci-app-qmodem-sms=m
           CONFIG_PACKAGE_luci-app-qmodem-mwan=m
           CONFIG_PACKAGE_luci-app-qmodem-ttl=m
+
+          # helpers / runtime
+          CONFIG_PACKAGE_sms-tool_q=m
+          CONFIG_PACKAGE_tom_modem=m
+          CONFIG_PACKAGE_ndisc6=m
+          CONFIG_PACKAGE_rdisc6=m
+          CONFIG_PACKAGE_ubus-at-daemon=m
+          CONFIG_PACKAGE_quectel-CM-5G-M=m
+          CONFIG_PACKAGE_sms-forwarder=m
+          CONFIG_PACKAGE_sms-forwarder-next=m
+
+          # driver outputs (if recipe present)
+          CONFIG_PACKAGE_kmod-qmi_wwan_f=m
+          CONFIG_PACKAGE_kmod-qmi_wwan_q=m
+          CONFIG_PACKAGE_kmod-qmi_wwan_s=m
           EOF
           make defconfig
 
-      - name: Compile full QModem stack
+      - name: Mark build start time
+        run: |
+          date +%s > /tmp/qmodem_build_start_epoch
+          touch /tmp/qmodem_build_start
+
+      - name: Build bc first
+        working-directory: ./sdk
+        run: |
+          set -e
+          make package/utils/bc/compile V=s -j1
+
+      - name: Build all known QModem package dirs
         working-directory: ./sdk
         run: |
           set -e
@@ -95,69 +102,89 @@ jobs:
             local pkg="$1"
             if [ -d "package/feeds/qmodem/$pkg" ] && [ -f "package/feeds/qmodem/$pkg/Makefile" ]; then
               echo "========================================"
-              echo "Compiling: $pkg"
+              echo "Compiling known package dir: $pkg"
               echo "========================================"
               make "package/feeds/qmodem/$pkg/compile" V=s -j1
             else
-              echo "SKIP (not found in feed): $pkg"
+              echo "SKIP (dir not found): $pkg"
             fi
           }
 
-          # Core
+          # core UIs
           build_if_exists qmodem
           build_if_exists luci-app-qmodem
-          build_if_exists sms-tool_q
-          build_if_exists tom_modem
-          build_if_exists ndisc6
-
-          # Runtime helpers / extras
-          build_if_exists ubus_at_daemon
-          build_if_exists quectel_CM_5G_M
-          build_if_exists sms_forwarder
-
-          # QMI driver recipe dirs (these usually emit kmod-qmi_wwan_*.ipk)
-          build_if_exists fibocom_QMI_WWAN
-          build_if_exists quectel_QMI_WWAN
-          build_if_exists simcom_QMI_WWAN
-
-          # Optional LuCI variants
           build_if_exists luci-app-qmodem-next
           build_if_exists luci-app-qmodem-sms
           build_if_exists luci-app-qmodem-mwan
           build_if_exists luci-app-qmodem-ttl
+          build_if_exists luci-app-qmodem-hc
 
-      - name: Collect QModem-related IPKs
+          # helpers
+          build_if_exists sms-tool_q
+          build_if_exists tom_modem
+          build_if_exists ndisc6
+          build_if_exists ubus_at_daemon
+          build_if_exists quectel_CM_5G_M
+          build_if_exists sms_forwarder
+          build_if_exists sms_forwarder_next
+
+          # driver recipes
+          build_if_exists fibocom_QMI_WWAN
+          build_if_exists quectel_QMI_WWAN
+          build_if_exists simcom_QMI_WWAN
+
+      - name: Build any remaining qmodem feed dirs automatically
+        working-directory: ./sdk
+        run: |
+          set -e
+
+          KNOWN_DIRS="
+          qmodem
+          luci-app-qmodem
+          luci-app-qmodem-next
+          luci-app-qmodem-sms
+          luci-app-qmodem-mwan
+          luci-app-qmodem-ttl
+          luci-app-qmodem-hc
+          sms-tool_q
+          tom_modem
+          ndisc6
+          ubus_at_daemon
+          quectel_CM_5G_M
+          sms_forwarder
+          sms_forwarder_next
+          fibocom_QMI_WWAN
+          quectel_QMI_WWAN
+          simcom_QMI_WWAN
+          "
+
+          for d in package/feeds/qmodem/*; do
+            [ -d "$d" ] || continue
+            [ -f "$d/Makefile" ] || continue
+            pkg="$(basename "$d")"
+
+            if echo " $KNOWN_DIRS " | grep -q " $pkg "; then
+              continue
+            fi
+
+            echo "========================================"
+            echo "Compiling extra discovered dir: $pkg"
+            echo "========================================"
+            make "package/feeds/qmodem/$pkg/compile" V=s -j1
+          done
+
+      - name: Collect ALL newly built IPKs
         run: |
           mkdir -p output
 
-          find sdk/bin/packages -type f -name "*.ipk" | sort | tee output/ipk-list.txt
+          find sdk/bin/packages -type f -name "*.ipk" | sort > output/ipk-list-all.txt
 
-          find sdk/bin/packages -type f -name "*.ipk" \
-            \( -name "qmodem*.ipk" -o \
-               -name "luci-app-qmodem*.ipk" -o \
-               -name "sms-tool_q*.ipk" -o \
-               -name "tom_modem*.ipk" -o \
-               -name "ndisc6*.ipk" -o \
-               -name "rdisc6*.ipk" -o \
-               -name "ubus-at-daemon*.ipk" -o \
-               -name "ubus_at_daemon*.ipk" -o \
-               -name "quectel-CM-5G-M*.ipk" -o \
-               -name "quectel_CM_5G_M*.ipk" -o \
-               -name "sms-forwarder*.ipk" -o \
-               -name "sms_forwarder*.ipk" -o \
-               -name "kmod-qmi_wwan_f*.ipk" -o \
-               -name "kmod-qmi_wwan_q*.ipk" -o \
-               -name "kmod-qmi_wwan_s*.ipk" -o \
-               -name "luci-app-qmodem-next*.ipk" -o \
-               -name "luci-app-qmodem-sms*.ipk" -o \
-               -name "luci-app-qmodem-mwan*.ipk" -o \
-               -name "luci-app-qmodem-ttl*.ipk" \) \
-            -exec cp -v {} output/ \;
+          find sdk/bin/packages -type f -name "*.ipk" -newer /tmp/qmodem_build_start -exec cp -v {} output/ \;
 
-          echo "=== output files ==="
+          echo "=== collected files ==="
           ls -lah output
 
-      - name: Verify core full-stack IPKs exist
+      - name: Verify critical packages exist
         run: |
           ls output/qmodem_*.ipk
           ls output/luci-app-qmodem_*.ipk
@@ -165,12 +192,14 @@ jobs:
           ls output/tom_modem_*.ipk
           ls output/ndisc6_*.ipk
           ls output/rdisc6_*.ipk
+          ls output/ubus-at-daemon_*.ipk
+          ls output/quectel-CM-5G-M_*.ipk
+          ls output/sms-forwarder_*.ipk
 
-      - name: Upload IPK artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: qmodem-aarch64-generic-ipk-full
+          name: qmodem-aarch64-generic-complete
           path: |
-            output/*.ipk
-            output/ipk-list.txt
+            output/*
           if-no-files-found: error
