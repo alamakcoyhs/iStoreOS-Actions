@@ -4,10 +4,7 @@ on:
   workflow_dispatch:
 
 env:
-  OPENWRT_VERSION: "24.10.5"
-  TARGET: "armsr"
-  SUBTARGET: "armv8"
-  SDK_URL: "https://downloads.openwrt.org/releases/24.10.5/targets/armsr/armv8/openwrt-sdk-24.10.5-armsr-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
+  SDK_URL: https://downloads.openwrt.org/releases/24.10.5/targets/armsr/armv8/openwrt-sdk-24.10.5-armsr-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.zst
 
 jobs:
   build:
@@ -47,15 +44,15 @@ jobs:
           ./scripts/feeds update qmodem
           ./scripts/feeds install -a -f -p qmodem
 
-      - name: Inspect installed qmodem feed
+      - name: Inspect qmodem packages
         working-directory: ./sdk
         run: |
-          echo "=== package/feeds/qmodem ==="
-          find package/feeds/qmodem -maxdepth 2 -type f \( -name "Makefile" -o -name "Config.in" \) | sort || true
-          echo "=== qmodem package directories ==="
+          echo "=== package dirs ==="
           find package/feeds/qmodem -mindepth 1 -maxdepth 1 -type d | sort || true
+          echo "=== makefiles ==="
+          find package/feeds/qmodem -mindepth 2 -maxdepth 2 -type f -name Makefile | sort || true
 
-      - name: Minimal config for feed build
+      - name: Prepare minimal config
         working-directory: ./sdk
         run: |
           cat > .config << 'EOF'
@@ -67,17 +64,47 @@ jobs:
           EOF
           make defconfig
 
-      - name: Compile entire qmodem feed
+      - name: Compile all qmodem feed packages one by one
         working-directory: ./sdk
         run: |
-          make package/feeds/qmodem/compile V=s -j1
+          set -e
+
+          PKGS=""
+          for d in package/feeds/qmodem/*; do
+            [ -d "$d" ] || continue
+            [ -f "$d/Makefile" ] || continue
+            PKGS="$PKGS $(basename "$d")"
+          done
+
+          PKGS="$(echo "$PKGS" | xargs)"
+          echo "Detected packages: $PKGS"
+
+          if [ -z "$PKGS" ]; then
+            echo "No buildable packages found in package/feeds/qmodem"
+            exit 1
+          fi
+
+          FAILED=""
+          for pkg in $PKGS; do
+            echo "========================================"
+            echo "Compiling package: $pkg"
+            echo "========================================"
+            if ! make "package/feeds/qmodem/$pkg/compile" V=s -j1; then
+              FAILED="$FAILED $pkg"
+            fi
+          done
+
+          FAILED="$(echo "$FAILED" | xargs || true)"
+          if [ -n "$FAILED" ]; then
+            echo "Some packages failed: $FAILED"
+            exit 1
+          fi
 
       - name: Collect IPKs
         run: |
           mkdir -p output
           find sdk/bin/packages -type f -name "*.ipk" | sort | tee output/ipk-list.txt
           find sdk/bin/packages -type f -name "*.ipk" -exec cp -v {} output/ \;
-          echo "=== Output files ==="
           ls -lah output
 
       - name: Upload IPK artifact
