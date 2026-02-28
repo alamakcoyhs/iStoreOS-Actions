@@ -25,10 +25,10 @@ uci commit luci
 
 # 【网络设置-static】
 uci set network.lan.proto='static'
-uci set network.lan.ipaddr='192.168.5.88'
+uci set network.lan.ipaddr='192.168.1.1'
 uci set network.lan.netmask='255.255.255.0'
-uci set network.lan.gateway='192.168.5.1'
-uci set network.lan.dns='223.5.5.5'
+uci delete network.lan.gateway
+uci delete network.lan.dns
 uci commit network
 
 # 【网络设置-dhcp】
