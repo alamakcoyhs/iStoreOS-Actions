@@ -1,4 +1,4 @@
-name: Build Quickstart for HG680P
+name: Build Quickstart IPK Only
 
 on:
   workflow_dispatch:
@@ -15,19 +15,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential ccache gettext libncurses5-dev libssl-dev zlib1g-dev gawk git gettext libelf-dev
 
-      - name: Download OpenWrt SDK (24.10.5)
+      - name: Download OpenWrt SDK
         run: |
-          # Menggunakan URL versi stabil 24.10.5 untuk target armvirt/64
-          BASE_URL="https://downloads.openwrt.org/releases/24.10.5/targets/armvirt/64"
-          
-          # Mengambil nama file otomatis dari server agar tidak error 404
-          SDK_FILE=$(curl -s "$BASE_URL/sha256sums" | grep "openwrt-sdk" | awk '{print $2}' | sed 's/*//g')
-          
-          echo "Mendownload SDK: $SDK_FILE..."
-          wget "$BASE_URL/$SDK_FILE"
-          
-          # Ekstrak dan ubah nama foldernya
-          tar -xJf "$SDK_FILE"
+          # Menggunakan SDK OpenWrt 23.05.5 (Basis sistem dari iStoreOS)
+          # SDK ini akan menghasilkan file .ipk aarch64_generic yang Anda butuhkan
+          wget https://downloads.openwrt.org/releases/23.05.5/targets/armvirt/64/openwrt-sdk-23.05.5-armvirt-64_gcc-12.3.0_musl.Linux-x86_64.tar.xz
+          tar -xJf openwrt-sdk-*.tar.xz
           mv openwrt-sdk-* sdk
 
       - name: Update and Install Feeds
@@ -35,13 +28,11 @@ jobs:
           cd sdk
           ./scripts/feeds update -a
           ./scripts/feeds install -a
-          # Install dependency inti
-          ./scripts/feeds install libubox libuci libubus
 
       - name: Clone Quickstart Source
         run: |
           cd sdk/package
-          # Clone aplikasi utama dan interface LuCI-nya
+          # Clone aplikasi utama dan interface web LuCI-nya
           git clone https://github.com/linkease/quickstart.git
           git clone https://github.com/linkease/luci-app-quickstart.git
 
@@ -49,12 +40,13 @@ jobs:
         run: |
           cd sdk
           make defconfig
-          # Proses compile
+          # Proses compile menjadi .ipk
           make package/quickstart/compile V=s
           make package/luci-app-quickstart/compile V=s
 
       - name: Upload Result
         uses: actions/upload-artifact@v4
         with:
-          name: quickstart-hg680p-aarch64
-          path: sdk/bin/packages/aarch64_generic/base/*.ipk
+          name: quickstart-ipk-aarch64-generic
+          # Mengambil hasil .ipk dan mengunggahnya ke GitHub
+          path: sdk/bin/packages/**/base/*.ipk
