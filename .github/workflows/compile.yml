@@ -12,12 +12,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y curl zstd tar
 
-      - name: Download iStoreOS ImageBuilder (armsr/aarch64)
+      - name: Download & Extract iStoreOS ImageBuilder
         run: |
-          # URL server KoolCenter yang sama persis digunakan oleh repo Kwonelee
+          # URL server KoolCenter 
           BASE_URL="https://fw.koolcenter.com/iStoreOS/ib/armsr/"
           
-          # Mencari nama file tar.zst / tar.xz terbaru secara dinamis dari server
+          # Mencari nama file terbaru
           FILE_NAME=$(curl -s "$BASE_URL" | grep -oE '[a-zA-Z0-9._-]+\.tar\.(zst|xz)' | sort -V | tail -n 1)
           
           if [ -z "$FILE_NAME" ]; then
@@ -28,25 +28,25 @@ jobs:
           echo "Mendownload ImageBuilder: $FILE_NAME..."
           curl -O "$BASE_URL$FILE_NAME"
           
-          echo "Mengekstrak ImageBuilder (ini mungkin memakan waktu puluhan detik)..."
-          if [[ "$FILE_NAME" == *.zst ]]; then
-            tar -I zstd -xf "$FILE_NAME"
-          else
-            tar -xf "$FILE_NAME"
-          fi
+          echo "Mengekstrak file (langsung dituangkan ke dalam ib_folder)..."
+          mkdir -p ib_folder
           
-          # Rename folder hasil ekstrak agar mudah diakses di langkah berikutnya
-          mv *imagebuilder* ib_folder
+          # Ekstrak langsung ke ib_folder dan buang struktur folder utama bawaannya (--strip-components=1)
+          if [[ "$FILE_NAME" == *.zst ]]; then
+            tar -I zstd -xf "$FILE_NAME" -C ib_folder --strip-components=1
+          else
+            tar -xf "$FILE_NAME" -C ib_folder --strip-components=1
+          fi
 
       - name: Extract Quickstart IPK
         run: |
           mkdir -p output_ipk
           
-          # Masuk ke folder packages milik iStoreOS dan "curi" file quickstart
+          # Curi file ipk yang dibutuhkan
           find ib_folder/packages/ -name "quickstart*.ipk" -exec cp {} output_ipk/ \;
           find ib_folder/packages/ -name "luci-app-quickstart*.ipk" -exec cp {} output_ipk/ \;
           
-          echo "File IPK yang berhasil didapatkan:"
+          echo "Daftar file yang berhasil didapatkan:"
           ls -lh output_ipk/
 
       - name: Upload Result
