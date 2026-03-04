@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4 # <-- Diubah ke v4
 
       - name: Install Dependencies
         run: |
@@ -45,7 +45,7 @@ jobs:
           make package/luci-app-quickstart/compile V=s
 
       - name: Upload Result
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4 # <-- Diubah ke v4
         with:
           name: quickstart-hg680p-aarch64
           path: sdk/bin/packages/aarch64_generic/base/*.ipk
