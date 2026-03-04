@@ -8,18 +8,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4 # <-- Diubah ke v4
+        uses: actions/checkout@v4
 
       - name: Install Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential ccache gettext libncurses5-dev libssl-dev zlib1g-dev gawk git gettext libelf-dev
 
-      - name: Download OpenWrt SDK (aarch64_generic)
+      - name: Download OpenWrt SDK (24.10.5)
         run: |
-          # Menggunakan SDK untuk target armvirt/64 (aarch64_generic)
-          wget https://downloads.openwrt.org/snapshots/targets/armvirt/64/openwrt-sdk-armvirt-64_gcc-13.3.0_musl.Linux-x86_64.tar.xz
-          tar -xJf openwrt-sdk-*.tar.xz
+          # Menggunakan URL versi stabil 24.10.5 untuk target armvirt/64
+          BASE_URL="https://downloads.openwrt.org/releases/24.10.5/targets/armvirt/64"
+          
+          # Mengambil nama file otomatis dari server agar tidak error 404
+          SDK_FILE=$(curl -s "$BASE_URL/sha256sums" | grep "openwrt-sdk" | awk '{print $2}' | sed 's/*//g')
+          
+          echo "Mendownload SDK: $SDK_FILE..."
+          wget "$BASE_URL/$SDK_FILE"
+          
+          # Ekstrak dan ubah nama foldernya
+          tar -xJf "$SDK_FILE"
           mv openwrt-sdk-* sdk
 
       - name: Update and Install Feeds
@@ -27,6 +35,8 @@ jobs:
           cd sdk
           ./scripts/feeds update -a
           ./scripts/feeds install -a
+          # Install dependency inti
+          ./scripts/feeds install libubox libuci libubus
 
       - name: Clone Quickstart Source
         run: |
@@ -38,14 +48,13 @@ jobs:
       - name: Compile Package
         run: |
           cd sdk
-          # Membuat file .config default agar SDK mengenali paket baru
           make defconfig
-          # Compile paket (V=s untuk log lengkap jika error)
+          # Proses compile
           make package/quickstart/compile V=s
           make package/luci-app-quickstart/compile V=s
 
       - name: Upload Result
-        uses: actions/upload-artifact@v4 # <-- Diubah ke v4
+        uses: actions/upload-artifact@v4
         with:
           name: quickstart-hg680p-aarch64
           path: sdk/bin/packages/aarch64_generic/base/*.ipk
