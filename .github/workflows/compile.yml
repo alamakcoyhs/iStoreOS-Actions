@@ -1,52 +1,56 @@
-name: Build Quickstart IPK Only
+name: Get Quickstart IPK (iStoreOS Logic)
 
 on:
   workflow_dispatch:
 
 jobs:
-  build:
+  get-ipk:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Dependencies
+      - name: Install Extract Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential ccache gettext libncurses5-dev libssl-dev zlib1g-dev gawk git gettext libelf-dev
+          sudo apt-get install -y curl zstd tar
 
-      - name: Download OpenWrt SDK
+      - name: Download iStoreOS ImageBuilder (armsr/aarch64)
         run: |
-          # Menggunakan SDK OpenWrt 23.05.5 (Basis sistem dari iStoreOS)
-          # SDK ini akan menghasilkan file .ipk aarch64_generic yang Anda butuhkan
-          wget https://downloads.openwrt.org/releases/23.05.5/targets/armvirt/64/openwrt-sdk-23.05.5-armvirt-64_gcc-12.3.0_musl.Linux-x86_64.tar.xz
-          tar -xJf openwrt-sdk-*.tar.xz
-          mv openwrt-sdk-* sdk
+          # URL server KoolCenter yang sama persis digunakan oleh repo Kwonelee
+          BASE_URL="https://fw.koolcenter.com/iStoreOS/ib/armsr/"
+          
+          # Mencari nama file tar.zst / tar.xz terbaru secara dinamis dari server
+          FILE_NAME=$(curl -s "$BASE_URL" | grep -oE '[a-zA-Z0-9._-]+\.tar\.(zst|xz)' | sort -V | tail -n 1)
+          
+          if [ -z "$FILE_NAME" ]; then
+            echo "Error: Tidak dapat menemukan file ImageBuilder di server!"
+            exit 1
+          fi
+          
+          echo "Mendownload ImageBuilder: $FILE_NAME..."
+          curl -O "$BASE_URL$FILE_NAME"
+          
+          echo "Mengekstrak ImageBuilder (ini mungkin memakan waktu puluhan detik)..."
+          if [[ "$FILE_NAME" == *.zst ]]; then
+            tar -I zstd -xf "$FILE_NAME"
+          else
+            tar -xf "$FILE_NAME"
+          fi
+          
+          # Rename folder hasil ekstrak agar mudah diakses di langkah berikutnya
+          mv *imagebuilder* ib_folder
 
-      - name: Update and Install Feeds
+      - name: Extract Quickstart IPK
         run: |
-          cd sdk
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
-
-      - name: Clone Quickstart Source
-        run: |
-          cd sdk/package
-          # Clone aplikasi utama dan interface web LuCI-nya
-          git clone https://github.com/linkease/quickstart.git
-          git clone https://github.com/linkease/luci-app-quickstart.git
-
-      - name: Compile Package
-        run: |
-          cd sdk
-          make defconfig
-          # Proses compile menjadi .ipk
-          make package/quickstart/compile V=s
-          make package/luci-app-quickstart/compile V=s
+          mkdir -p output_ipk
+          
+          # Masuk ke folder packages milik iStoreOS dan "curi" file quickstart
+          find ib_folder/packages/ -name "quickstart*.ipk" -exec cp {} output_ipk/ \;
+          find ib_folder/packages/ -name "luci-app-quickstart*.ipk" -exec cp {} output_ipk/ \;
+          
+          echo "File IPK yang berhasil didapatkan:"
+          ls -lh output_ipk/
 
       - name: Upload Result
         uses: actions/upload-artifact@v4
         with:
-          name: quickstart-ipk-aarch64-generic
-          # Mengambil hasil .ipk dan mengunggahnya ke GitHub
-          path: sdk/bin/packages/**/base/*.ipk
+          name: quickstart-ipk-istoreos-24.10
+          path: output_ipk/*.ipk
